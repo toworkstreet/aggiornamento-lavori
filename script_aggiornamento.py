@@ -23,7 +23,7 @@ def estrai_costo(testo):
     if match: return match.group(0)
     return "N.D."
 
-def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=100):
+def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=5):
     for es in lavori_esistenti:
         if es.get('latitudine') and es.get('longitudine'):
             distanza = geodesic((nuova_lat, nuova_lon), (es['latitudine'], es['longitudine'])).meters
