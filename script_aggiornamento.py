@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime
 from geopy.geocoders import Nominatim
+from geopy.distance import geodesic
 from supabase import create_client, Client
 
 # Configurazione API Supabase
@@ -11,6 +12,14 @@ supabase: Client = create_client(url, key)
 
 # Configurazione Geocoder gratuito (OpenStreetMap)
 geolocator = Nominatim(user_agent="roadwork_app_v1")
+
+def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=50):
+    """Controlla se esiste già un punto entro la soglia di metri specificata"""
+    for es in lavori_esistenti:
+        distanza = geodesic((nuova_lat, nuova_lon), (es['latitudine'], es['longitudine'])).meters
+        if distanza < soglia_metri:
+            return True
+    return False
 
 def ottieni_coordinate(indirizzo):
     """Converte un indirizzo o nome strada in coordinate lat/lon"""
@@ -23,10 +32,7 @@ def ottieni_coordinate(indirizzo):
     return None, None
 
 def fetch_dati_finti_esemplificativi():
-    """
-    Simula i dati dalle fonti (Anas, Autostrade, CCISS).
-    In una versione avanzata, qui aggiungerai le chiamate API reali.
-    """
+    """Simulazione dati da fonti pubbliche"""
     return [
         {"desc": "Lavori A1 Milano-Napoli", "pos": "A1, Italia", "lat": 45.4642, "lon": 9.1900, "inizio": "2026-01-25", "fonte": "Autostrade"},
         {"desc": "Cantiere SS1 Aurelia", "pos": "SS1 Aurelia, Italia", "lat": 41.8902, "lon": 12.4922, "inizio": "2025-06-15", "fonte": "Anas"},
@@ -36,26 +42,44 @@ def fetch_dati_finti_esemplificativi():
 
 def aggiorna_database():
     print(f"--- Avvio aggiornamento del {datetime.now()} ---")
-    lavori = fetch_dati_finti_esemplificativi()
     
-    for l in lavori:
+    # 1. Scarichiamo i lavori già presenti nel database per il confronto
+    try:
+        res = supabase.table("lavori").select("latitudine, longitudine").execute()
+        lavori_esistenti = res.data
+    except Exception as e:
+        print(f"Errore nel recupero dati esistenti: {e}")
+        lavori_esistenti = []
+
+    nuovi_lavori = fetch_dati_finti_esemplificativi()
+    
+    for l in nuovi_lavori:
         lat, lon = l['lat'], l['lon']
         
-        # Se non abbiamo le coordinate, proviamo a ricavarle dal nome posizione
         if not lat or not lon:
             lat, lon = ottieni_coordinate(l['pos'])
             
         if lat and lon:
+            # 2. Controllo doppioni entro 50 metri
+            if è_un_doppione(lat, lon, lavori_esistenti, soglia_metri=50):
+                print(f"⚠️ Salto doppione geografico (entro 50m): {l['desc']}")
+                continue
+
             try:
-                # Inserimento o aggiornamento (upsert) basato sulla descrizione
-                supabase.table("lavori").upsert({
-                    "descrizione": l["desc"],
+                # 3. Inserimento semplice (senza upsert per evitare errori di vincoli)
+                supabase.table("lavori").insert({
                     "latitudine": lat,
                     "longitudine": lon,
                     "data_inizio": l["inizio"],
                     "fonte": l["fonte"]
-                }, on_conflict="descrizione").execute()
-                print(f"✅ OK: {l['desc']} ({l['fonte']})")
+                    # "descrizione" rimosso se non presente nella tua tabella, 
+                    # aggiungilo solo se hai creato la colonna specifica
+                }).execute()
+                
+                # Aggiungiamo il nuovo punto alla lista locale per i controlli successivi del ciclo
+                lavori_esistenti.append({"latitudine": lat, "longitudine": lon})
+                print(f"✅ Inserito: {l['desc']}")
+                
             except Exception as e:
                 print(f"❌ Errore Supabase per {l['desc']}: {e}")
         else:
