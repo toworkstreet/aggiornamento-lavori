@@ -111,9 +111,9 @@ def aggiorna_database():
         lavori_esistenti = []
 
     fonti_rss = [
-        {"url": "https://www.stradeanas.it/it/viabilita/piani-interventi/feed", "nome": "ANAS"},
-        {"url": "https://www.mit.gov.it/notizie/rss.xml", "nome": "MIT"},
-        {"url": "https://www.luceverde.it/rss/roma", "nome": "LuceVerde Roma"}
+        {"url": "https://www.comune.roma.it/notizie/rss/aree-tematiche/mobilita-e-trasporti", "nome": "Roma Mobilità"},
+        {"url": "https://www.comune.milano.it/wps/portal/ist/it/news?isRss=true", "nome": "Milano News"},
+        {"url": "https://servizi.comune.fi.it/rss/viabilita", "nome": "Firenze Viabilità"}
     ]
 
     lista_totale = fetch_osm_lavori()
