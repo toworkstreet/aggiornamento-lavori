@@ -40,7 +40,7 @@ def fetch_osm_lavori():
       node["highway"="construction"](area.italy);
       way["highway"="construction"](area.italy);
     );
-    out center 100; 
+    out center 500; 
     """
     try:
         response = requests.post("https://overpass-api.de/api/interpreter", data={'data': query}, timeout=40)
