@@ -33,6 +33,7 @@ def ottieni_coordinate(indirizzo):
 
 def fetch_dati_finti_esemplificativi():
     return [
+        {"desc": "Nuovo Lavoro Test", "pos": "Venezia, Italia", "lat": 45.4408, "lon": 12.3155, "inizio": "2026-01-31", "fonte": "Test"},
         {"desc": "Lavori A1 Milano-Napoli", "pos": "A1, Italia", "lat": 45.4642, "lon": 9.1900, "inizio": "2026-01-25", "fonte": "Autostrade"},
         {"desc": "Cantiere SS1 Aurelia", "pos": "SS1 Aurelia, Italia", "lat": 41.8902, "lon": 12.4922, "inizio": "2025-06-15", "fonte": "Anas"},
         {"desc": "Rifacimento Ponte Storico", "pos": "Firenze, Italia", "lat": 43.7696, "lon": 11.2558, "inizio": "2024-12-01", "fonte": "Comune"},
