@@ -1,7 +1,7 @@
 import os
 import requests
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
@@ -23,7 +23,7 @@ def estrai_costo(testo):
     if match: return match.group(0)
     return "N.D."
 
-def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=5):
+def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=100):
     for es in lavori_esistenti:
         if es.get('latitudine') and es.get('longitudine'):
             distanza = geodesic((nuova_lat, nuova_lon), (es['latitudine'], es['longitudine'])).meters
@@ -31,25 +31,27 @@ def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=5):
     return False
 
 def fetch_osm_lavori():
-    print("🛰️ Ricerca cantieri su OpenStreetMap (Query ottimizzata)...")
-    # Ho ridotto il timeout e aggiunto un filtro per elementi modificati di recente per non sovraccaricare
-    query = """
-    [out:json][timeout:30];
+    # Calcolo della data di 7 giorni fa nel formato richiesto da OSM (ISO 8601)
+    data_limite = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+    print(f"🛰️ Ricerca cantieri su OSM aggiornati dopo il: {data_limite}")
+    
+    query = f"""
+    [out:json][timeout:60];
     area["ISO3166-1"="IT"]->.italy;
     (
-      node["highway"="construction"](area.italy);
-      way["highway"="construction"](area.italy);
+      node["highway"="construction"](area.italy)(newer:"{data_limite}");
+      way["highway"="construction"](area.italy)(newer:"{data_limite}");
     );
-    out center 500; 
+    out center; 
     """
     try:
-        response = requests.post("https://overpass-api.de/api/interpreter", data={'data': query}, timeout=40)
+        response = requests.post("https://overpass-api.de/api/interpreter", data={'data': query}, timeout=90)
         print(f"📡 Risposta OSM ricevuta (Status: {response.status_code})")
         data = response.json()
         risultati = []
         oggi = datetime.now().strftime("%Y-%m-%d")
         elements = data.get('elements', [])
-        print(f"🔎 Trovati {len(elements)} potenziali elementi su OSM")
+        print(f"🔎 Trovati {len(elements)} elementi modificati di recente su OSM")
         
         for element in elements:
             tags = element.get('tags', {})
@@ -67,13 +69,13 @@ def fetch_osm_lavori():
                 })
         return risultati
     except Exception as e:
-        print(f"⚠️ Errore OSM (saltato per timeout o sovraccarico): {e}")
+        print(f"⚠️ Errore OSM (saltato): {e}")
         return []
 
 def fetch_rss_lavori(rss_url, nome_fonte):
     print(f"📰 Lettura Feed: {nome_fonte}...")
     try:
-        response = requests.get(rss_url, timeout=10)
+        response = requests.get(rss_url, timeout=15)
         if response.status_code != 200: 
             print(f"❌ Errore HTTP {response.status_code} per {nome_fonte}")
             return []
@@ -99,15 +101,15 @@ def fetch_rss_lavori(rss_url, nome_fonte):
         return []
 
 def aggiorna_database():
-    print(f"🚀 --- AVVIO SCANSIONE: {datetime.now()} ---")
+    print(f"🚀 --- AVVIO SCANSIONE AUTOMATICA: {datetime.now()} ---")
     
     try:
-        print("🔗 Connessione a Supabase per recupero duplicati...")
+        print("🔗 Connessione a Supabase...")
         res = supabase.table("lavori").select("latitudine, longitudine").execute()
         lavori_esistenti = res.data
         print(f"📦 Database attuale contiene {len(lavori_esistenti)} punti.")
     except Exception as e:
-        print(f"❌ Errore connessione iniziale database: {e}")
+        print(f"❌ Errore database: {e}")
         lavori_esistenti = []
 
     fonti_rss = [
@@ -120,19 +122,18 @@ def aggiorna_database():
     for f in fonti_rss:
         lista_totale.extend(fetch_rss_lavori(f['url'], f['nome']))
 
-    print(f"📋 Totale elementi da processare: {len(lista_totale)}")
+    print(f"📋 Totale elementi da verificare: {len(lista_totale)}")
     
     da_inserire_bulk = []
     for i, l in enumerate(lista_totale):
         lat, lon = l.get('lat'), l.get('lon')
         if not lat or not lon:
             try:
-                # Geocoding molto selettivo per non essere bannati
                 print(f"📍 Geocoding ({i+1}/{len(lista_totale)}): {l['pos'][:30]}...")
-                location = geolocator.geocode(f"{l['pos']}, Italy", timeout=3)
+                location = geolocator.geocode(f"{l['pos']}, Italy", timeout=5)
                 if location: 
                     lat, lon = location.latitude, location.longitude
-                    time.sleep(1) # Rispetto per Nominatim
+                    time.sleep(1.1) # Pausa per non essere bloccati da Nominatim
                 else: continue
             except: continue
             
@@ -140,20 +141,20 @@ def aggiorna_database():
             da_inserire_bulk.append({
                 "latitudine": lat, "longitudine": lon,
                 "data_inizio": l["inizio"], "ultima_segnalazione": l["ultima_segnalazione"],
-                "fonte": l["fonte"], "descrizione": l["desc"][:250], # Limite caratteri
+                "fonte": l["fonte"], "descrizione": l["desc"][:250],
                 "costo": l.get("costo", "N.D.")
             })
             lavori_esistenti.append({"latitudine": lat, "longitudine": lon})
 
     if da_inserire_bulk:
-        print(f"📤 Tentativo inserimento di {len(da_inserire_bulk)} nuovi record...")
+        print(f"📤 Inserimento di {len(da_inserire_bulk)} nuovi record...")
         try:
             supabase.table("lavori").insert(da_inserire_bulk).execute()
-            print(f"🎉 Aggiornamento completato con successo!")
+            print(f"🎉 Aggiornamento terminato con successo!")
         except Exception as e:
-            print(f"❌ Errore durante l'inserimento finale: {e}")
+            print(f"❌ Errore inserimento: {e}")
     else:
-        print("ℹ️ Nessuna novità da aggiungere.")
+        print("ℹ️ Nessun nuovo cantiere trovato negli ultimi 7 giorni.")
 
 if __name__ == "__main__":
     aggiorna_database()
