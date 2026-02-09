@@ -21,10 +21,8 @@ geolocator = Nominatim(user_agent="roadwork_tracker_italy_v3")
 def estrai_provincia(testo):
     if not testo: return "N.D."
     
-    # Portiamo tutto in maiuscolo per confrontare i nomi
     testo_upper = testo.upper()
 
-    # 1. DIZIONARIO COMPLETO PROVINCE ITALIANE (Nome Esteso -> Sigla)
     mappa_province = {
         "AGRIGENTO": "AG", "ALESSANDRIA": "AL", "ANCONA": "AN", "AOSTA": "AO", "AREZZO": "AR", 
         "ASCOLI PICENO": "AP", "ASTI": "AT", "AVELLINO": "AV", "BARI": "BA", "BARLETTA": "BT", 
@@ -52,20 +50,17 @@ def estrai_provincia(testo):
         "VITERBO": "VT"
     }
 
-    # Controllo nomi estesi (cerchiamo la parola intera per evitare errori)
     for nome, sigla in mappa_province.items():
         if nome in testo_upper:
             return sigla
 
-    # 2. SE NON TROVA IL NOME ESTESO, CERCA LA SIGLA (Regex Originale)
-    # Ho aggiunto alcune sigle mancanti nella tua lista (es. SP, AQ, RE, MO, TP, TN)
     pattern = r'\b(AG|AL|AN|AO|AR|AP|AT|AV|BA|BT|BL|BN|BG|BI|BO|BR|BS|BZ|CA|CB|CI|CE|CH|CL|CR|CS|CT|CZ|EN|FC|FE|FG|FI|FM|FR|GE|GO|GR|IM|IS|KR|LC|LE|LI|LO|LT|LU|MB|MC|ME|MI|MN|MS|MT|NA|NO|NU|OG|OT|OR|PA|PC|PD|PE|PG|PI|PN|PO|PR|PT|PU|PV|PZ|RA|RC|RG|RI|RM|RN|RO|SA|SS|SI|SR|SU|SV|TA|TE|TR|TS|TV|UD|VA|VB|VC|VE|VI|VR|VS|VT|VV|SP|AQ|RE|MO|TP|TN)\b'
-    
     match = re.search(pattern, testo_upper)
     if match:
         return match.group(0)
 
     return "N.D."
+
 def estrai_costo(testo):
     if not testo: return "N.D."
     match = re.search(r'(\d+[\d\.,]*)\s*(€|Euro|euro|milioni|mln|Mln)', testo)
@@ -122,8 +117,9 @@ def fetch_osm_lavori():
 
 def fetch_rss_lavori(rss_url, nome_fonte):
     print(f"📰 Lettura Feed: {nome_fonte}...")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
     try:
-        response = requests.get(rss_url, timeout=15)
+        response = requests.get(rss_url, headers=headers, timeout=15)
         if response.status_code != 200: 
             print(f"❌ Errore HTTP {response.status_code} per {nome_fonte}")
             return []
@@ -139,7 +135,7 @@ def fetch_rss_lavori(rss_url, nome_fonte):
             risultati.append({
                 "lat": None, "lon": None, "pos": title,
                 "inizio": oggi, "ultima_segnalazione": oggi,
-                "fonte": nome_fonte, "desc": f"{title} {desc}", # Unito per cercare meglio la provincia
+                "fonte": nome_fonte, "desc": f"{title} {desc}",
                 "costo": estrai_costo(f"{title} {desc}")
             })
         print(f"✅ Recuperati {len(risultati)} elementi da {nome_fonte}")
@@ -176,7 +172,6 @@ def aggiorna_database():
     for i, l in enumerate(lista_totale):
         lat, lon = l.get('lat'), l.get('lon')
         
-        # Geocoding se mancano le coordinate
         if not lat or not lon:
             try:
                 print(f"📍 Geocoding ({i+1}/{len(lista_totale)}): {l['pos'][:30]}...")
@@ -188,12 +183,24 @@ def aggiorna_database():
             except: continue
             
         if lat and lon and not è_un_doppione(lat, lon, lavori_esistenti):
-            # ESTRAZIONE PROVINCIA DALLA DESCRIZIONE O TITOLO
+            # PROVA 1: Estrazione dal testo
             prov = estrai_provincia(l["desc"])
             
+            # PROVA 2: Se N.D., prova dalle coordinate (Reverse Geocoding)
+            if prov == "N.D.":
+                try:
+                    location = geolocator.reverse((lat, lon), timeout=5)
+                    if location and 'address' in location.raw:
+                        addr = location.raw['address']
+                        target = addr.get('province') or addr.get('county') or addr.get('city')
+                        if target:
+                            prov = estrai_provincia(target)
+                    time.sleep(1.1)
+                except: pass
+
             da_inserire_bulk.append({
                 "latitudine": lat, "longitudine": lon,
-                "provincia": prov, # <--- AGGIUNTO AL RECORD
+                "provincia": prov,
                 "data_inizio": l["inizio"], "ultima_segnalazione": l["ultima_segnalazione"],
                 "fonte": l["fonte"], "descrizione": l["desc"][:250],
                 "costo": l.get("costo", "N.D.")
