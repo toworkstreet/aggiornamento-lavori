@@ -17,6 +17,16 @@ supabase: Client = create_client(url, key)
 # User agent specifico per evitare blocchi
 geolocator = Nominatim(user_agent="roadwork_tracker_italy_v3")
 
+# --- NUOVA FUNZIONE: ESTRAZIONE PROVINCIA ---
+def estrai_provincia(testo):
+    if not testo: return "N.D."
+    # Cerca sigle province (es: RM, MI, CT) isolate da confini di parola
+    pattern = r'\b(AG|AL|AN|AO|AR|AP|AT|AV|BA|BT|BL|BN|BG|BI|BO|BR|BS|BZ|CA|CB|CI|CE|CH|CL|CR|CS|CT|CZ|EN|FC|FE|FG|FI|FM|FR|GE|GO|GR|IM|IS|KR|LC|LE|LI|LO|LT|LU|MB|MC|ME|MI|MN|MS|MT|NA|NO|NU|OG|OT|OR|PA|PC|PD|PE|PG|PI|PN|PO|PR|PT|PU|PV|PZ|RA|RC|RG|RI|RM|RN|RO|SA|SS|SI|SR|SU|SV|TA|TE|TR|TS|TV|UD|VA|VB|VC|VE|VI|VR|VS|VT|VV)\b'
+    match = re.search(pattern, testo, re.IGNORECASE)
+    if match:
+        return match.group(0).upper()
+    return "N.D."
+
 def estrai_costo(testo):
     if not testo: return "N.D."
     match = re.search(r'(\d+[\d\.,]*)\s*(€|Euro|euro|milioni|mln|Mln)', testo)
@@ -31,7 +41,6 @@ def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=100):
     return False
 
 def fetch_osm_lavori():
-    # Calcolo della data di 7 giorni fa nel formato richiesto da OSM (ISO 8601)
     data_limite = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
     print(f"🛰️ Ricerca cantieri su OSM aggiornati dopo il: {data_limite}")
     
@@ -91,7 +100,7 @@ def fetch_rss_lavori(rss_url, nome_fonte):
             risultati.append({
                 "lat": None, "lon": None, "pos": title,
                 "inizio": oggi, "ultima_segnalazione": oggi,
-                "fonte": nome_fonte, "desc": title,
+                "fonte": nome_fonte, "desc": f"{title} {desc}", # Unito per cercare meglio la provincia
                 "costo": estrai_costo(f"{title} {desc}")
             })
         print(f"✅ Recuperati {len(risultati)} elementi da {nome_fonte}")
@@ -127,19 +136,25 @@ def aggiorna_database():
     da_inserire_bulk = []
     for i, l in enumerate(lista_totale):
         lat, lon = l.get('lat'), l.get('lon')
+        
+        # Geocoding se mancano le coordinate
         if not lat or not lon:
             try:
                 print(f"📍 Geocoding ({i+1}/{len(lista_totale)}): {l['pos'][:30]}...")
                 location = geolocator.geocode(f"{l['pos']}, Italy", timeout=5)
                 if location: 
                     lat, lon = location.latitude, location.longitude
-                    time.sleep(1.1) # Pausa per non essere bloccati da Nominatim
+                    time.sleep(1.1) 
                 else: continue
             except: continue
             
         if lat and lon and not è_un_doppione(lat, lon, lavori_esistenti):
+            # ESTRAZIONE PROVINCIA DALLA DESCRIZIONE O TITOLO
+            prov = estrai_provincia(l["desc"])
+            
             da_inserire_bulk.append({
                 "latitudine": lat, "longitudine": lon,
+                "provincia": prov, # <--- AGGIUNTO AL RECORD
                 "data_inizio": l["inizio"], "ultima_segnalazione": l["ultima_segnalazione"],
                 "fonte": l["fonte"], "descrizione": l["desc"][:250],
                 "costo": l.get("costo", "N.D.")
