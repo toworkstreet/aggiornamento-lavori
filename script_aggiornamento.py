@@ -20,13 +20,52 @@ geolocator = Nominatim(user_agent="roadwork_tracker_italy_v3")
 # --- NUOVA FUNZIONE: ESTRAZIONE PROVINCIA ---
 def estrai_provincia(testo):
     if not testo: return "N.D."
-    # Cerca sigle province (es: RM, MI, CT) isolate da confini di parola
-    pattern = r'\b(AG|AL|AN|AO|AR|AP|AT|AV|BA|BT|BL|BN|BG|BI|BO|BR|BS|BZ|CA|CB|CI|CE|CH|CL|CR|CS|CT|CZ|EN|FC|FE|FG|FI|FM|FR|GE|GO|GR|IM|IS|KR|LC|LE|LI|LO|LT|LU|MB|MC|ME|MI|MN|MS|MT|NA|NO|NU|OG|OT|OR|PA|PC|PD|PE|PG|PI|PN|PO|PR|PT|PU|PV|PZ|RA|RC|RG|RI|RM|RN|RO|SA|SS|SI|SR|SU|SV|TA|TE|TR|TS|TV|UD|VA|VB|VC|VE|VI|VR|VS|VT|VV)\b'
-    match = re.search(pattern, testo, re.IGNORECASE)
-    if match:
-        return match.group(0).upper()
-    return "N.D."
+    
+    # Portiamo tutto in maiuscolo per confrontare i nomi
+    testo_upper = testo.upper()
 
+    # 1. DIZIONARIO COMPLETO PROVINCE ITALIANE (Nome Esteso -> Sigla)
+    mappa_province = {
+        "AGRIGENTO": "AG", "ALESSANDRIA": "AL", "ANCONA": "AN", "AOSTA": "AO", "AREZZO": "AR", 
+        "ASCOLI PICENO": "AP", "ASTI": "AT", "AVELLINO": "AV", "BARI": "BA", "BARLETTA": "BT", 
+        "ANDRIA": "BT", "TRANI": "BT", "BELLUNO": "BL", "BENEVENTO": "BN", "BERGAMO": "BG", 
+        "BIELLA": "BI", "BOLOGNA": "BO", "BOLZANO": "BZ", "BRESCIA": "BS", "BRINDISI": "BR", 
+        "CAGLIARI": "CA", "CALTANISSETTA": "CL", "CAMPOBASSO": "CB", "CASERTA": "CE", 
+        "CATANIA": "CT", "CATANZARO": "CZ", "CHIETI": "CH", "COMO": "CO", "COSENZA": "CS", 
+        "CREMONA": "CR", "CROTONE": "KR", "CUNEO": "CN", "ENNA": "EN", "FERMO": "FM", 
+        "FERRARA": "FE", "FIRENZE": "FI", "FOGGIA": "FG", "FORLI": "FC", "CESENA": "FC", 
+        "FROSINONE": "FR", "GENOVA": "GE", "GORIZIA": "GO", "GROSSETO": "GR", "IMPERIA": "IM", 
+        "ISERNIA": "IS", "L'AQUILA": "AQ", "LA SPEZIA": "SP", "LATINA": "LT", "LECCE": "LE", 
+        "LECCO": "LC", "LIVORNO": "LI", "LODI": "LO", "LUCCA": "LU", "MACERATA": "MC", 
+        "MANTOVA": "MN", "MASSA": "MS", "CARRARA": "MS", "MATERA": "MT", "MESSINA": "ME", 
+        "MILANO": "MI", "MODENA": "MO", "MONZA": "MB", "BRIANZA": "MB", "NAPOLI": "NA", 
+        "NOVARA": "NO", "NUORO": "NU", "ORISTANO": "OR", "PADOVA": "PD", "PALERMO": "PA", 
+        "PARMA": "PR", "PAVIA": "PV", "PERUGIA": "PG", "PESARO": "PU", "URBINO": "PU", 
+        "PESCARA": "PE", "PIACENZA": "PC", "PISA": "PI", "PISTOIA": "PT", "PORDENONE": "PN", 
+        "POTENZA": "PZ", "PRATO": "PO", "RAGUSA": "RG", "RAVENNA": "RA", "REGGIO CALABRIA": "RC", 
+        "REGGIO EMILIA": "RE", "RIETI": "RI", "RIMINI": "RN", "ROMA": "RM", "ROVIGO": "RO", 
+        "SALERNO": "SA", "SASSARI": "SS", "SAVONA": "SV", "SIENA": "SI", "SIRACUSA": "SR", 
+        "SONDRIO": "SO", "SUD SARDEGNA": "SU", "TARANTO": "TA", "TERAMO": "TE", "TERNI": "TR", 
+        "TORINO": "TO", "TRAPANI": "TP", "TRENTO": "TN", "TREVISO": "TV", "TRIESTE": "TS", 
+        "UDINE": "UD", "VARESE": "VA", "VENEZIA": "VE", "VERBANO": "VB", "CUSIO": "VB", 
+        "OSSOLA": "VB", "VERCELLI": "VC", "VERONA": "VR", "VIBO VALENTIA": "VV", "VICENZA": "VI", 
+        "VITERBO": "VT"
+    }
+
+    # Controllo nomi estesi (cerchiamo la parola intera per evitare errori)
+    for nome, sigla in mappa_province.items():
+        if nome in testo_upper:
+            return sigla
+
+    # 2. SE NON TROVA IL NOME ESTESO, CERCA LA SIGLA (Regex Originale)
+    # Ho aggiunto alcune sigle mancanti nella tua lista (es. SP, AQ, RE, MO, TP, TN)
+    pattern = r'\b(AG|AL|AN|AO|AR|AP|AT|AV|BA|BT|BL|BN|BG|BI|BO|BR|BS|BZ|CA|CB|CI|CE|CH|CL|CR|CS|CT|CZ|EN|FC|FE|FG|FI|FM|FR|GE|GO|GR|IM|IS|KR|LC|LE|LI|LO|LT|LU|MB|MC|ME|MI|MN|MS|MT|NA|NO|NU|OG|OT|OR|PA|PC|PD|PE|PG|PI|PN|PO|PR|PT|PU|PV|PZ|RA|RC|RG|RI|RM|RN|RO|SA|SS|SI|SR|SU|SV|TA|TE|TR|TS|TV|UD|VA|VB|VC|VE|VI|VR|VS|VT|VV|SP|AQ|RE|MO|TP|TN)\b'
+    
+    match = re.search(pattern, testo_upper)
+    if match:
+        return match.group(0)
+
+    return "N.D."
 def estrai_costo(testo):
     if not testo: return "N.D."
     match = re.search(r'(\d+[\d\.,]*)\s*(€|Euro|euro|milioni|mln|Mln)', testo)
