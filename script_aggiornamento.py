@@ -14,10 +14,33 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
-# User agent specifico per evitare blocchi
+# User agent specifico per Nominatim per evitare blocchi
 geolocator = Nominatim(user_agent="roadwork_tracker_italy_v4")
 
+# Header "travestimento" da Browser per non farsi bloccare dai server dei Comuni
+HEADERS_BROWSER = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*'
+}
+
 # --- FUNZIONI DI SUPPORTO ---
+def valida_data(data_string):
+    """Pulisce e formatta la data per evitare crash nel database Supabase"""
+    if not data_string or str(data_string) == "N.D.":
+        return datetime.now().strftime("%Y-%m-%d")
+    
+    data_string = str(data_string).strip()
+    
+    # Se è solo l'anno (es. "2006"), trasformalo in "2006-01-01"
+    if len(data_string) == 4 and data_string.isdigit():
+        return f"{data_string}-01-01"
+    
+    # Se la data è troppo corta (es. "12/05") o strana, metti oggi
+    if len(data_string) < 8:
+        return datetime.now().strftime("%Y-%m-%d")
+        
+    return data_string
+
 def estrai_provincia(testo):
     if not testo: return "N.D."
     testo_upper = testo.upper()
@@ -112,10 +135,9 @@ def fetch_osm_lavori():
 # --- 2. FONTE: RSS FEEDS ---
 def fetch_rss_lavori(rss_url, nome_fonte, citta_riferimento=""):
     print(f"📰 Lettura Feed RSS: {nome_fonte}...")
-    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        response = requests.get(rss_url, headers=headers, timeout=15)
-        if response.status_code != 200: return []
+        response = requests.get(rss_url, headers=HEADERS_BROWSER, timeout=30)
+        response.raise_for_status() # Verifica se il server restituisce errore (es 404/500)
         
         root = ET.fromstring(response.content)
         risultati = []
@@ -146,10 +168,9 @@ def fetch_rss_lavori(rss_url, nome_fonte, citta_riferimento=""):
 # --- 3. NUOVA FONTE: OPEN DATA GEOJSON ---
 def fetch_geojson_lavori(geojson_url, nome_fonte):
     print(f"🌍 Lettura GeoJSON Open Data: {nome_fonte}...")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
-        response = requests.get(geojson_url, timeout=15)
-        if response.status_code != 200: return []
+        response = requests.get(geojson_url, headers=HEADERS_BROWSER, timeout=30)
+        response.raise_for_status() # Blocca il parsing JSON se il sito ha restituito una pagina HTML di errore
         
         data = response.json()
         risultati = []
@@ -208,7 +229,6 @@ def aggiorna_database():
 
     # 2. Definizione delle Fonti GeoJSON (Esempi di Open Data reali o standard)
     fonti_geojson = [
-        # Esempio: Portale Open Data Inserisci URL reali se li trovi su dati.gov.it
         {
             "url": "https://dati.comune.bologna.it/api/explore/v2.1/catalog/datasets/cantieri-in-corso/exports/geojson",
             "nome": "Comune di Bologna"
@@ -277,10 +297,14 @@ def aggiorna_database():
                     time.sleep(1.1)
                 except: pass
 
+            # Pulizia e Validazione della Data prima di mandarla a Supabase
+            data_pulita = valida_data(l.get("inizio"))
+
             da_inserire_bulk.append({
                 "latitudine": lat, "longitudine": lon,
                 "provincia": prov,
-                "data_inizio": l["inizio"], "ultima_segnalazione": l["ultima_segnalazione"],
+                "data_inizio": data_pulita, 
+                "ultima_segnalazione": l["ultima_segnalazione"],
                 "fonte": l["fonte"], "descrizione": l["desc"][:250],
                 "costo": l.get("costo", "N.D.")
             })
