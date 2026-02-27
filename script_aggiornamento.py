@@ -249,27 +249,39 @@ def aggiorna_database():
         # Geocoding per le fonti RSS che non hanno coordinate
         if not lat or not lon:
             try:
-                print(f"📍 Geocoding ({i+1}/{len(lista_totale)}): {l['pos'][:40]}...")
-                location = geolocator.geocode(f"{l['pos']}, Italy", timeout=5)
+                # Aggiungiamo flush=True per vedere SUBITO i log su GitHub
+                print(f"📍 Geocoding Diretto ({i+1}/{len(lista_totale)})...", flush=True)
+                location = geolocator.geocode(f"{l['pos']}, Italy", timeout=10)
                 if location: 
                     lat, lon = location.latitude, location.longitude
-                    time.sleep(1.1)
+                    time.sleep(1.2)
                 else: continue
-            except: continue
+            except Exception as e:
+                print(f"⚠️ Errore API Geocoder: {e}", flush=True)
+                continue
             
-        if lat and lon and not è_un_doppione(lat, lon, lavori_esistenti):
+        if lat and lon and not è_un_doppione(lat, lon, lavori_esistenti, soglia_metri=50):
             prov = estrai_provincia(l["desc"])
             
+            # --- REVERSE GEOCODING MIGLIORATO E SICURO ---
             if prov == "N.D.":
                 try:
-                    location = geolocator.reverse((lat, lon), timeout=5)
+                    # Ti mostra esattamente a che punto è
+                    print(f"⏳ Reverse Geocoding ({i+1}/{len(lista_totale)}): cerco provincia...", flush=True)
+                    
+                    location = geolocator.reverse((lat, lon), timeout=10)
                     if location and 'address' in location.raw:
                         addr = location.raw['address']
                         target = addr.get('province') or addr.get('county') or addr.get('city')
                         if target:
                             prov = estrai_provincia(target)
-                    time.sleep(1.1)
-                except: pass
+                            
+                    # ATTESA OBBLIGATORIA: Se abbassi questo numero, ti bloccano l'IP.
+                    time.sleep(1.5) 
+                    
+                except Exception as e:
+                    print(f"⚠️ Salto {lat}, {lon} per Timeout/Blocco: {e}", flush=True)
+                    time.sleep(3) # Pausa extra per far "respirare" il server se è sovraccarico
 
             data_pulita = valida_data(l.get("inizio"))
 
@@ -282,21 +294,25 @@ def aggiorna_database():
                 "costo": l.get("costo", "N.D.")
             })
             lavori_esistenti.append({"latitudine": lat, "longitudine": lon})
+            
+            # Ogni 100 cantieri ti avvisa, così sai che non si è bloccato
+            if len(da_inserire_bulk) % 100 == 0:
+                print(f"📦 Pronti per il salvataggio: {len(da_inserire_bulk)} nuovi cantieri...", flush=True)
 
     if da_inserire_bulk:
-        print(f"📤 Inserimento di {len(da_inserire_bulk)} nuovi record nel database...")
-        # Dividiamo l'inserimento in blocchi da 1000 per evitare errori "Payload too large" di Supabase
+        print(f"📤 Inserimento di {len(da_inserire_bulk)} nuovi record nel database...", flush=True)
+        # Dividiamo l'inserimento in blocchi da 1000 per evitare errori "Payload too large"
         chunk_size = 1000
         for i in range(0, len(da_inserire_bulk), chunk_size):
             chunk = da_inserire_bulk[i:i + chunk_size]
             try:
                 supabase.table("lavori").insert(chunk).execute()
-                print(f"✅ Blocco {i//chunk_size + 1} inserito ({len(chunk)} record).")
+                print(f"✅ Blocco {i//chunk_size + 1} inserito ({len(chunk)} record).", flush=True)
             except Exception as e:
-                print(f"❌ Errore inserimento blocco: {e}")
-        print(f"🎉 Aggiornamento terminato con successo!")
+                print(f"❌ Errore inserimento blocco: {e}", flush=True)
+        print(f"🎉 Aggiornamento terminato con successo!", flush=True)
     else:
-        print("ℹ️ Nessun nuovo cantiere trovato (o tutti già presenti).")
+        print("ℹ️ Nessun nuovo cantiere trovato (o tutti già presenti).", flush=True)
 
 if __name__ == "__main__":
     aggiorna_database()
