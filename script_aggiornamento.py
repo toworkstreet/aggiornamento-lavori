@@ -1,7 +1,7 @@
 import os
 import requests
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import xml.etree.ElementTree as ET
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
@@ -15,7 +15,7 @@ key = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
 # User agent specifico per Nominatim per evitare blocchi
-geolocator = Nominatim(user_agent="roadwork_tracker_italy_v4")
+geolocator = Nominatim(user_agent="roadwork_tracker_italy_v5")
 
 # Header "travestimento" da Browser per non farsi bloccare dai server dei Comuni
 HEADERS_BROWSER = {
@@ -31,11 +31,9 @@ def valida_data(data_string):
     
     data_string = str(data_string).strip()
     
-    # Se è solo l'anno (es. "2006"), trasformalo in "2006-01-01"
     if len(data_string) == 4 and data_string.isdigit():
         return f"{data_string}-01-01"
     
-    # Se la data è troppo corta (es. "12/05") o strana, metti oggi
     if len(data_string) < 8:
         return datetime.now().strftime("%Y-%m-%d")
         
@@ -73,8 +71,7 @@ def estrai_provincia(testo):
     }
 
     for nome, sigla in mappa_province.items():
-        if nome in testo_upper:
-            return sigla
+        if nome in testo_upper: return sigla
 
     pattern = r'\b(AG|AL|AN|AO|AR|AP|AT|AV|BA|BT|BL|BN|BG|BI|BO|BR|BS|BZ|CA|CB|CI|CE|CH|CL|CR|CS|CT|CZ|EN|FC|FE|FG|FI|FM|FR|GE|GO|GR|IM|IS|KR|LC|LE|LI|LO|LT|LU|MB|MC|ME|MI|MN|MS|MT|NA|NO|NU|OG|OT|OR|PA|PC|PD|PE|PG|PI|PN|PO|PR|PT|PU|PV|PZ|RA|RC|RG|RI|RM|RN|RO|SA|SS|SI|SR|SU|SV|TA|TE|TR|TS|TV|UD|VA|VB|VC|VE|VI|VR|VS|VT|VV|SP|AQ|RE|MO|TP|TN)\b'
     match = re.search(pattern, testo_upper)
@@ -96,25 +93,28 @@ def è_un_doppione(nuova_lat, nuova_lon, lavori_esistenti, soglia_metri=100):
 
 # --- 1. FONTE: OPENSTREETMAP ---
 def fetch_osm_lavori():
-    data_limite = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
-    print(f"🛰️ Ricerca cantieri su OSM aggiornati dopo il: {data_limite}")
+    print("🛰️ Ricerca cantieri su OSM in tutta Italia (Senza limiti di tempo)...")
     
-    query = f"""
-    [out:json][timeout:60];
+    # Rimosso il filtro dei 7 giorni. Aggiunto anche il tag barrier=road_work.
+    # Aumentato il timeout a 120 perché la query troverà migliaia di punti.
+    query = """
+    [out:json][timeout:120];
     area["ISO3166-1"="IT"]->.italy;
     (
-      node["highway"="construction"](area.italy)(newer:"{data_limite}");
-      way["highway"="construction"](area.italy)(newer:"{data_limite}");
+      node["highway"="construction"](area.italy);
+      way["highway"="construction"](area.italy);
+      node["barrier"="road_work"](area.italy);
+      way["barrier"="road_work"](area.italy);
     );
     out center; 
     """
     try:
-        response = requests.post("https://overpass-api.de/api/interpreter", data={'data': query}, timeout=90)
+        response = requests.post("https://overpass-api.de/api/interpreter", data={'data': query}, timeout=130)
         data = response.json()
         risultati = []
         oggi = datetime.now().strftime("%Y-%m-%d")
         elements = data.get('elements', [])
-        print(f"🔎 Trovati {len(elements)} elementi su OSM")
+        print(f"🔎 Trovati {len(elements)} cantieri attivi su OSM!")
         
         for element in elements:
             tags = element.get('tags', {})
@@ -137,7 +137,7 @@ def fetch_rss_lavori(rss_url, nome_fonte, citta_riferimento=""):
     print(f"📰 Lettura Feed RSS: {nome_fonte}...")
     try:
         response = requests.get(rss_url, headers=HEADERS_BROWSER, timeout=30)
-        response.raise_for_status() # Verifica se il server restituisce errore (es 404/500)
+        response.raise_for_status()
         
         root = ET.fromstring(response.content)
         risultati = []
@@ -150,7 +150,6 @@ def fetch_rss_lavori(rss_url, nome_fonte, citta_riferimento=""):
             title = title_node.text if title_node is not None else ""
             desc = desc_node.text if desc_node is not None else ""
             
-            # Aggiungo la città per aiutare il Geocoder di Nominatim
             indirizzo_ricerca = f"{title}, {citta_riferimento}" if citta_riferimento else title
 
             risultati.append({
@@ -165,12 +164,12 @@ def fetch_rss_lavori(rss_url, nome_fonte, citta_riferimento=""):
         print(f"⚠️ Fonte {nome_fonte} saltata: {e}")
         return []
 
-# --- 3. NUOVA FONTE: OPEN DATA GEOJSON ---
+# --- 3. FONTE: OPEN DATA GEOJSON ---
 def fetch_geojson_lavori(geojson_url, nome_fonte):
     print(f"🌍 Lettura GeoJSON Open Data: {nome_fonte}...")
     try:
         response = requests.get(geojson_url, headers=HEADERS_BROWSER, timeout=30)
-        response.raise_for_status() # Blocca il parsing JSON se il sito ha restituito una pagina HTML di errore
+        response.raise_for_status()
         
         data = response.json()
         risultati = []
@@ -182,16 +181,13 @@ def fetch_geojson_lavori(geojson_url, nome_fonte):
             if not geom: continue
 
             lat, lon = None, None
-            # Estrae le coordinate in base al tipo di geometria (Punto o Linea)
             if geom['type'] == 'Point':
                 lon, lat = geom['coordinates']
             elif geom['type'] in ['LineString', 'MultiLineString']:
-                # Prende il punto di inizio del cantiere
                 coords = geom['coordinates'][0] if geom['type'] == 'LineString' else geom['coordinates'][0][0]
                 lon, lat = coords
 
             if lat and lon:
-                # Cerca campi descrizione tipici nei GeoJSON italiani
                 desc = props.get('descrizione', props.get('oggetto', props.get('note', 'Cantiere stradale (Open Data)')))
                 inizio = props.get('data_inizio', props.get('dal', oggi))
                 
@@ -220,42 +216,22 @@ def aggiorna_database():
         print(f"❌ Errore database: {e}")
         lavori_esistenti = []
 
-    # 1. Definizione delle Fonti RSS
     fonti_rss = [
         {"url": "https://www.stradeanas.it/it/rss.xml", "nome": "ANAS News", "citta": "Italy"},
         {"url": "https://www.comune.roma.it/notizie/rss/aree-tematiche/mobilita-e-trasporti", "nome": "Roma Mobilità", "citta": "Roma"},
         {"url": "https://www.comune.milano.it/wps/portal/ist/it/news?isRss=true", "nome": "Milano News", "citta": "Milano"},
     ]
 
-    # 2. Definizione delle Fonti GeoJSON (Esempi di Open Data reali o standard)
     fonti_geojson = [
-        {
-            "url": "https://dati.comune.bologna.it/api/explore/v2.1/catalog/datasets/cantieri-in-corso/exports/geojson",
-            "nome": "Comune di Bologna"
-        },
-        {
-            "url": "https://dati.comune.milano.it/dataset/7996df8a-530e-473d-882d-467dc0269399/resource/90097c31-3069-4560-9372-8823525a4072/download/cantieri-v-p-m-m_geo.json",
-            "nome": "Comune di Milano"
-        },
-        {
-            "url": "https://servizi.comune.fi.it/opendata/viabilita_geojson",
-            "nome": "Comune di Firenze"
-        },
-        {
-            "url": "https://geodati.fmv.it/api/v1/datasets/cantieri-stradali/geojson",
-            "nome": "Città Metropolitana di Venezia"
-        },
-        {
-            "url": "http://geoportale.comune.torino.it/geoserver/wfs?service=WFS&version=1.1.0&request=GetFeature&typeName=geoportale:cantieri_lavori_pubblici&outputFormat=application/json",
-            "nome": "Comune di Torino"
-        },
-        {
-            "url": "https://opendata.comune.bari.it/dataset/cantieri-stradali/resource/geojson",
-            "nome": "Comune di Bari"
-        }
+        {"url": "https://dati.comune.bologna.it/api/explore/v2.1/catalog/datasets/cantieri-in-corso/exports/geojson", "nome": "Comune di Bologna"},
+        {"url": "https://dati.comune.milano.it/dataset/7996df8a-530e-473d-882d-467dc0269399/resource/90097c31-3069-4560-9372-8823525a4072/download/cantieri-v-p-m-m_geo.json", "nome": "Comune di Milano"},
+        {"url": "https://servizi.comune.fi.it/opendata/viabilita_geojson", "nome": "Comune di Firenze"},
+        {"url": "https://geodati.fmv.it/api/v1/datasets/cantieri-stradali/geojson", "nome": "Città Metropolitana di Venezia"},
+        {"url": "http://geoportale.comune.torino.it/geoserver/wfs?service=WFS&version=1.1.0&request=GetFeature&typeName=geoportale:cantieri_lavori_pubblici&outputFormat=application/json", "nome": "Comune di Torino"},
+        # Il link di Bari prima non puntava al JSON diretto. L'ho mantenuto come test, ma se fallisce la funzione lo salterà senza bloccare il resto.
+        {"url": "https://opendata.comune.bari.it/dataset/cantieri-stradali/resource/geojson", "nome": "Comune di Bari"}
     ]
 
-    # Raccoglie tutti i dati
     lista_totale = fetch_osm_lavori()
     
     for f in fonti_rss:
@@ -264,7 +240,7 @@ def aggiorna_database():
     for f in fonti_geojson:
         lista_totale.extend(fetch_geojson_lavori(f['url'], f['nome']))
 
-    print(f"📋 Totale elementi da verificare e geolocalizzare: {len(lista_totale)}")
+    print(f"📋 Totale elementi da elaborare: {len(lista_totale)}")
     
     da_inserire_bulk = []
     for i, l in enumerate(lista_totale):
@@ -277,15 +253,13 @@ def aggiorna_database():
                 location = geolocator.geocode(f"{l['pos']}, Italy", timeout=5)
                 if location: 
                     lat, lon = location.latitude, location.longitude
-                    time.sleep(1.1) # Rispetta i limiti di Nominatim
+                    time.sleep(1.1)
                 else: continue
             except: continue
             
         if lat and lon and not è_un_doppione(lat, lon, lavori_esistenti):
-            # PROVA 1: Estrazione dal testo
             prov = estrai_provincia(l["desc"])
             
-            # PROVA 2: Se N.D., prova dalle coordinate (Reverse Geocoding)
             if prov == "N.D.":
                 try:
                     location = geolocator.reverse((lat, lon), timeout=5)
@@ -297,7 +271,6 @@ def aggiorna_database():
                     time.sleep(1.1)
                 except: pass
 
-            # Pulizia e Validazione della Data prima di mandarla a Supabase
             data_pulita = valida_data(l.get("inizio"))
 
             da_inserire_bulk.append({
@@ -312,11 +285,16 @@ def aggiorna_database():
 
     if da_inserire_bulk:
         print(f"📤 Inserimento di {len(da_inserire_bulk)} nuovi record nel database...")
-        try:
-            supabase.table("lavori").insert(da_inserire_bulk).execute()
-            print(f"🎉 Aggiornamento terminato con successo!")
-        except Exception as e:
-            print(f"❌ Errore inserimento: {e}")
+        # Dividiamo l'inserimento in blocchi da 1000 per evitare errori "Payload too large" di Supabase
+        chunk_size = 1000
+        for i in range(0, len(da_inserire_bulk), chunk_size):
+            chunk = da_inserire_bulk[i:i + chunk_size]
+            try:
+                supabase.table("lavori").insert(chunk).execute()
+                print(f"✅ Blocco {i//chunk_size + 1} inserito ({len(chunk)} record).")
+            except Exception as e:
+                print(f"❌ Errore inserimento blocco: {e}")
+        print(f"🎉 Aggiornamento terminato con successo!")
     else:
         print("ℹ️ Nessun nuovo cantiere trovato (o tutti già presenti).")
 
